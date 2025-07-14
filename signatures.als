@@ -1,15 +1,17 @@
-sig Task {
-    /* optional data-flow edges — keep even if you ignore them for now */
-    downstream : set Task,
+open util/integer
 
-    /* mutable per-task state */
-    var state  : one TaskState
+abstract sig Pool {
+    cap : one Int
 }
 
-/* full Airflow 2.x lattice (13 values) */
+abstract sig Task {
+    downstream : set Task,
+    pool : one Pool,
+    var state    : one TaskState,
+    var retriesLeft : one Int
+}
+
 enum TaskState {
     NONE, SCHEDULED, QUEUED, RUNNING,
-    SUCCESS, RESTARTING, FAILED, UP_FOR_RETRY,
-    SKIPPED, UP_FOR_RESCHEDULE, UPSTREAM_FAILED,
-    DEFERRED, REMOVED
+    SUCCESS, FAILED, UP_FOR_RETRY, UPSTREAM_FAILED
 }
