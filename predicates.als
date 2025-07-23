@@ -33,12 +33,12 @@ pred P_Queue[t : Task] {
 /* P3  QUEUED → RUNNING (readiness + capacity) */
 pred P_StartRunning[t : Task] {
     t.state = QUEUED and
-    taskIsReady[t] and
+    taskIsReady[t] and poolHasSlot[t] and
     t.state' = RUNNING and
     t.retriesLeft' = t.retriesLeft
 }
 
-/* P4  RUNNING → {SUCCESS,FAILED,SKIPPED} */
+/* P4  RUNNING → {SUCCESS,FAILED} */
 pred P_Finish[t : Task] {
     t.state = RUNNING and
     t.state' in SUCCESS + FAILED and
@@ -52,52 +52,50 @@ pred P_MarkRetry[t : Task] {
     t.retriesLeft' = t.retriesLeft
 }
 
-/* P6  UP_FOR_RETRY → QUEUED (decrement counter) */
+/* P6  UP_FOR_RETRY → SCHEDULED (decrement counter) */
 pred P_Requeue[t : Task] {
     t.state = UP_FOR_RETRY and
     t.state' = SCHEDULED and
     t.retriesLeft' = sub[t.retriesLeft,1]
 }
 
-/* P9  Upstream failure short-circuit */
-pred P_UpstreamFail[t : Task] {
-    t.state in NONE + SCHEDULED + QUEUED and
-    some u : upstream[t] | u.state in FAILED and
-    t.state' = UPSTREAM_FAILED and
-    t.retriesLeft' = t.retriesLeft
-}
-
 /* P10  Sticky terminal self-loops */
 pred P_Stick[t : Task] {
-    t.state in SUCCESS + FAILED + UPSTREAM_FAILED and
+    ((t.state in SUCCESS) or (t.state in FAILED and t.retriesLeft = 0)) and
     t.state' = t.state and
     t.retriesLeft' = t.retriesLeft
 }
 
-/* Helper: check if a task makes a "real" transition (state change) */
-pred taskStep[t : Task] {
-    ((P_Schedule[t] or P_Queue[t] or P_StartRunning[t] or P_Finish[t] or
-     P_MarkRetry[t] or P_Requeue[t] or P_UpstreamFail[t]) and
-    t.state' != t.state) or P_Stick[t]
+/* Helper: real transitions that change state */
+pred realTransition[t : Task] {
+    (P_Schedule[t] or P_Queue[t] or P_StartRunning[t] or P_Finish[t] or
+     P_MarkRetry[t] or P_Requeue[t]) and t.state' != t.state
 }
 
-/*****************  SCHEDULER (progress + stutter) ******************/
+/* Helper: check if any real progress is possible */
+pred canProgress {
+    some t : Task | 
+        (t.state = NONE and taskIsReady[t]) or
+        (t.state = SCHEDULED) or
+        (t.state = QUEUED and taskIsReady[t] and poolHasSlot[t]) or
+        (t.state = RUNNING) or
+        (t.state = FAILED and t.retriesLeft > 0) or
+        (t.state = UP_FOR_RETRY)
+}
 
-/* progress: exactly one task changes, others frozen */
+/*****************  SCHEDULER ******************/
+
+/* progress: prioritize real transitions over stuck transitions */
 pred progressStep {
-    one t : Task | (taskStep[t] and all t1 : (Task-t) | t1.state' = t1.state and t1.retriesLeft' = t1.retriesLeft)
+    (canProgress and one t : Task | realTransition[t]) or
+    (not canProgress and all t : Task | P_Stick[t])
+    
+    // All tasks must take some transition or explicitly stay frozen
+    all t : Task | 
+        P_Schedule[t] or P_Queue[t] or P_StartRunning[t] or P_Finish[t] or
+        P_MarkRetry[t] or P_Requeue[t] or P_Stick[t] or
+        (t.state' = t.state and t.retriesLeft' = t.retriesLeft)
 }
-
-/* helper: is *any* real move enabled? */
-//pred someEnabled { 
-//    some t : Task | realTransition[t]
-//}
-
-/* stutter allowed only when nothing can move */
-//pred stutterStep {
-//    not someEnabled and
-//    all t : Task | P_NoChange[t]
-//}
 
 /* global step relation */
-pred step {progressStep}
+pred step { progressStep }
